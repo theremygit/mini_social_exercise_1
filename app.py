@@ -193,6 +193,19 @@ def feed():
             'comments': comments_moderated
         })
 
+    # Design Claim 1 of Chapter 2: Making the list of needed contributions easily visible
+    # Calculate global statistics for posts needing contributions
+    stats_query = """
+        SELECT 
+            COUNT(CASE WHEN r.post_id IS NULL THEN 1 END) as no_reactions,
+            COUNT(CASE WHEN c.post_id IS NULL THEN 1 END) as no_comments,
+            COUNT(CASE WHEN r.post_id IS NULL AND c.post_id IS NULL THEN 1 END) as no_contributions
+        FROM posts p
+        LEFT JOIN (SELECT DISTINCT post_id FROM reactions) r ON p.id = r.post_id
+        LEFT JOIN (SELECT DISTINCT post_id FROM comments) c ON p.id = c.post_id
+    """
+    contribution_stats = query_db(stats_query, one=True)
+
     #  4. Render Template with Pagination Info 
     return render_template('feed.html.j2', 
                            posts=posts_data, 
@@ -201,7 +214,8 @@ def feed():
                            page=page, # Pass current page number
                            per_page=POSTS_PER_PAGE, # Pass items per page
                            reaction_emojis=REACTION_EMOJIS,
-                           reaction_types=REACTION_TYPES)
+                           reaction_types=REACTION_TYPES,
+                           contribution_stats=contribution_stats)
 
 @app.route('/posts/new', methods=['POST'])
 def add_post():
@@ -232,6 +246,37 @@ def add_post():
 
     # Redirect back to the main feed to see the new post
     return redirect(url_for('feed'))
+
+
+# Design Claim 1 of Chapter 2: Making the list of needed contributions easily visible
+@app.route('/posts/random-unanswered')
+def random_unanswered_post():
+    """
+    Directs the user to a random post that has received no reactions and no comments.
+    Fulfills Design Claim 1 by reducing effort for users to discover and contribute to unanswered posts.
+    """
+    current_user_id = session.get('user_id')
+
+    # Exclude user's own posts if logged in so they contribute to others' content
+    user_filter = "AND p.user_id != ?" if current_user_id else ""
+    params = [current_user_id] if current_user_id else []
+
+    query = f"""
+        SELECT p.id
+        FROM posts p
+        WHERE NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)
+          AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
+          {user_filter}
+        ORDER BY RANDOM()
+        LIMIT 1
+    """
+    post = query_db(query, params, one=True)
+    if post:
+        flash("Here is a post that hasn't received any interactions yet! Be the first to share a thought or react.", "info")
+        return redirect(url_for('post_detail', post_id=post['id']))
+    else:
+        flash("No unanswered posts needing contributions were found at the moment!", "info")
+        return redirect(url_for('feed'))
     
     
 @app.route('/posts/<int:post_id>/delete', methods=['POST'])
@@ -941,38 +986,35 @@ def recommend(user_id, filter_following):
     return recommended_posts;
 
 
+# Design Claim 1 of Chapter 2: Making the list of needed contributions easily visible
 def needing_contribution(current_user_id, pagination_params):
     """
     Returns:
-        A list of recommended posts, in reverse-chronological order.
+        A list of posts that need contributions (no reactions and no comments),
+        in reverse-chronological order.
+        If current_user_id is provided, excludes the current user's own posts.
     """
-    needing_contribution_posts = {}
-    # Rule: Cannot be a post from the same user
-    if current_user_id:
-        query = f"""
-                            SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
-                            FROM posts p
-                            JOIN users u ON p.user_id = u.id
-                            WHERE p.user_id != {current_user_id}
-                            AND NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)
-                            AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
-                            ORDER BY p.created_at DESC
-                            LIMIT ? OFFSET ?
-                        """
-    else:
-        query = f"""
-                            SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
-                            FROM posts p
-                            JOIN users u ON p.user_id = u.id
-                            WHERE NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)
-                            AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
-                            ORDER BY p.created_at DESC
-                            LIMIT ? OFFSET ?
-                        """
-    final_params = list(pagination_params)
-    needing_contribution_posts = query_db(query, final_params)
+    where_conditions = [
+        "NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)",
+        "NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)"
+    ]
+    params = []
 
-    return needing_contribution_posts
+    # Rule: Cannot be a post from the current user
+    if current_user_id:
+        where_conditions.insert(0, "p.user_id != ?")
+        params.append(current_user_id)
+
+    query = f"""
+        SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        WHERE {' AND '.join(where_conditions)}
+        ORDER BY p.created_at DESC
+        LIMIT ? OFFSET ?
+    """
+    final_params = params + list(pagination_params)
+    return query_db(query, final_params)
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
