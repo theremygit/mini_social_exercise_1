@@ -1,0 +1,140 @@
+{% extends "base.html.j2" %}
+{% block content %}
+
+<!-- Design Claim 23 of Chapter 2: Rewards—whether in the form of status, privileges, or material benefits—motivate contributions -->
+<div class="container col-md-10 mx-auto py-4">
+
+  <!-- Header Banner -->
+  <div class="card shadow-sm mb-4 border-0 bg-primary text-white">
+    <div class="card-body p-4 d-flex flex-column flex-md-row justify-content-between align-items-center gap-3">
+      <div>
+        <h2 class="card-title fw-bold mb-1">Rewards & Skins Shop</h2>
+        <p class="mb-0 opacity-75">
+          Earn points by contributing to the community and unlock exclusive visual skins to showcase your status!
+        </p>
+      </div>
+      <div class="d-flex align-items-center gap-3 text-nowrap">
+        {% if session.get('user_id') %}
+          <div class="bg-white text-dark rounded-pill px-4 py-2 shadow-sm d-flex align-items-center gap-2">
+            <div class="align-items-center justify-content-center d-flex" style="flex-wrap: wrap;">
+              <div class="small text-muted w-100 text-center" style="line-height: 1;">Your Balance</div>
+              <strong class="fs-5">{{ user_points }}</strong> <span class="small text-muted">pts</span>
+            </div>
+          </div>
+          {% if streak > 0 %}
+            <div class="bg-warning text-dark rounded-pill px-3 py-2 shadow-sm d-flex align-items-center" title="Daily login streak">
+              <strong>{{ streak }}</strong>d streak
+            </div>
+          {% endif %}
+        {% else %}
+          <a href="{{ url_for('login') }}" class="btn btn-light fw-semibold">Login to Earn Points</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- How to Earn Points Section -->
+  <div class="card shadow-sm mb-5">
+    <div class="card-header bg-light">
+      <h5 class="card-title mb-0 fw-bold">How to Earn Points</h5>
+    </div>
+    <div class="card-body">
+      <div class="row g-3 text-center">
+        <div class="col-6 col-md-3">
+          <div class="p-3 border rounded h-100 bg-light">
+            <h6 class="fw-bold mb-1">Daily Login Streak</h6>
+            <span class="badge bg-warning text-dark mb-2">+10 to +100 pts</span>
+            <p class="small text-muted mb-0">+10 pts per day, +10 each consecutive day up to 100/day!</p>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="p-3 border rounded h-100 bg-light">
+            <h6 class="fw-bold mb-1">1st Post of the Day</h6>
+            <span class="badge bg-success mb-2">+50 pts</span>
+            <p class="small text-muted mb-0">Kickstart the community conversation every morning!</p>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="p-3 border rounded h-100 bg-light">
+            <h6 class="fw-bold mb-1">Comments</h6>
+            <span class="badge bg-primary mb-2">+10 pts</span>
+            <p class="small text-muted mb-0">Help answer peers or join discussions on any post.</p>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="p-3 border rounded h-100 bg-light">
+            <h6 class="fw-bold mb-1">Reactions</h6>
+            <span class="badge bg-info text-dark mb-2">+10 pts</span>
+            <p class="small text-muted mb-0">Leave likes, loves, laughs, and support on posts.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Skin Catalog -->
+  <h3 class="border-bottom pb-2 mb-4"><span>Exclusive Cosmetic Skins</span></h3>
+
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4">
+    {% for skin in skins %}
+    <div class="col">
+      <div class="card h-100 shadow-sm border {% if equipped_skin_id == skin.id %}border-success border-2{% endif %}">
+        
+        <div class="card-header d-flex justify-content-between align-items-center bg-white border-bottom">
+          <h5 class="card-title mb-0 fw-bold" style="color: {{ skin.color }};">{{ skin.name }}</h5>
+          <span class="badge {% if skin.price == 0 %}bg-secondary{% elif skin.id in unlocked_skin_ids %}bg-success{% else %}bg-primary{% endif %}">
+            {% if skin.price == 0 %}Free{% else %}{{ skin.price }} pts{% endif %}
+          </span>
+        </div>
+
+        <div class="card-body d-flex flex-column">
+          <p class="card-text text-muted small mb-3 flex-grow-1">{{ skin.description }}</p>
+
+          <!-- Preview Box -->
+          <div class="p-2 mb-3 rounded bg-light border text-center">
+            <div class="small text-muted mb-1">Preview:</div>
+            <div class="d-inline-flex align-items-center gap-1" style="color: {{ skin.color }};">
+              <span class="d-inline-flex align-items-center justify-content-center" 
+                    style="width: 1.5em; height: 1.5em; border-radius: 50%; border: 2px solid {{ skin.color }}; {% if skin.id != 1 %}box-shadow: 0 0 5px {{ skin.color }};{% endif %}">
+                <svg width="0.85em" height="0.85em" viewBox="0 0 90 90" fill="currentColor">
+                  <path d="M45 0C20.147 0 0 20.147 0 45c0 24.853 20.147 45 45 45s45-20.147 45-45C90 20.147 69.853 0 45 0zM45 22.007c8.899 0 16.14 7.241 16.14 16.14 0 8.9-7.241 16.14-16.14 16.14-8.9 0-16.14-7.24-16.14-16.14C28.86 29.248 36.1 22.007 45 22.007zM45 83.843c-11.135 0-21.123-4.885-27.957-12.623 3.177-5.75 8.144-10.476 14.05-13.341 2.009-.974 4.354-.958 6.435.041 2.343 1.126 4.857 1.696 7.473 1.696 2.615 0 5.13-.571 7.473-1.696 2.083-1 4.428-1.015 6.435-.041 5.906 2.864 10.872 7.591 14.049 13.341-6.834 7.738-16.822 12.623-27.957 12.623z"/>
+                </svg>
+              </span>
+              <span class="fw-semibold">@{{ session.get('username') or 'username' }}</span>
+              {% if skin.id != 1 %}
+                <span class="badge" style="background-color: {{ skin.color }}; color: #fff; font-size: 0.7em;">
+                  {{ skin.name }}
+                </span>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Action Button -->
+          <div class="mt-auto">
+            {% if not session.get('user_id') %}
+              <a href="{{ url_for('login') }}" class="btn btn-outline-primary w-100">Login to Unlock</a>
+            {% elif equipped_skin_id == skin.id %}
+              <button class="btn btn-success w-100" disabled>Currently Equipped</button>
+            {% elif skin.id in unlocked_skin_ids %}
+              <form action="{{ url_for('equip_skin', skin_id=skin.id) }}" method="POST">
+                <button type="submit" class="btn btn-outline-primary w-100">Equip</button>
+              </form>
+            {% elif user_points >= skin.price %}
+              <form action="{{ url_for('unlock_skin', skin_id=skin.id) }}" method="POST">
+                <button type="submit" class="btn btn-primary w-100">Unlock & Equip ({{ skin.price }} pts)</button>
+              </form>
+            {% else %}
+              <button class="btn btn-secondary w-100" disabled>
+                Needs {{ skin.price }} pts ({{ skin.price - user_points }} more)
+              </button>
+            {% endif %}
+          </div>
+        </div>
+
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
