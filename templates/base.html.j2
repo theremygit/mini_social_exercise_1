@@ -38,6 +38,9 @@
           <a href="/" class="nav-link">Home</a>
         </li>
         <li class="nav-item">
+          <a class="nav-link" href="/shop">Shop</a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link" href="/about">About</a>
         </li>
         <li class="nav-item">
@@ -49,6 +52,80 @@
 
         <!-- Check if user is logged in -->
         {% if session.get('user_id') %}
+          <!-- Design Claim 15 of Chapter 2: Daily Goals Widget with Progress Bars in Title Bar -->
+          {% if user_gamification and user_gamification.goals %}
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle d-flex align-items-center gap-1" href="#" id="goalsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+              Goals
+              {% if user_gamification.goals.is_completed %}
+                <span class="badge bg-primary d-inline-flex align-items-center justify-content-center">Complete</span>
+              {% else %}
+                <span class="badge bg-primary d-inline-flex align-items-center justify-content-center">Step {{ user_gamification.goals.step }}</span>
+              {% endif %}
+            </a>
+            <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 260px;" aria-labelledby="goalsDropdown">
+              <h6 class="dropdown-header px-0 pt-0 pb-1 text-dark fw-bold border-bottom mb-2">
+                Daily Goals - Step {{ user_gamification.goals.step }}
+                {% if user_gamification.goals.is_completed %}
+                  <span class="badge bg-success float-end">Done!</span>
+                {% endif %}
+              </h6>
+
+              <!-- Posts goal -->
+              <div class="mb-2">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="text-secondary fw-semibold">Posts</span>
+                  <span class="text-dark fw-bold">{{ user_gamification.goals.posts_today }} / {{ user_gamification.goals.target_posts }}</span>
+                </div>
+                <div class="progress" style="height: 16px;">
+                  <div class="progress-bar {% if user_gamification.goals.posts_today >= user_gamification.goals.target_posts %}bg-success{% else %}bg-primary{% endif %}" 
+                       role="progressbar" 
+                       style="width: {{ user_gamification.goals.posts_pct }}%;" 
+                       aria-valuenow="{{ user_gamification.goals.posts_today }}" 
+                       aria-valuemin="0" 
+                       aria-valuemax="{{ user_gamification.goals.target_posts }}"></div>
+                </div>
+              </div>
+
+              <!-- Reactions goal -->
+              <div class="mb-3">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="text-secondary fw-semibold">Reactions</span>
+                  <span class="text-dark fw-bold">{{ user_gamification.goals.reactions_today }} / {{ user_gamification.goals.target_reactions }}</span>
+                </div>
+                <div class="progress" style="height: 16px;">
+                  <div class="progress-bar {% if user_gamification.goals.reactions_today >= user_gamification.goals.target_reactions %}bg-success{% else %}bg-info{% endif %}" 
+                       role="progressbar" 
+                       style="width: {{ user_gamification.goals.reactions_pct }}%;" 
+                       aria-valuenow="{{ user_gamification.goals.reactions_today }}" 
+                       aria-valuemin="0" 
+                       aria-valuemax="{{ user_gamification.goals.target_reactions }}"></div>
+                </div>
+              </div>
+
+              <div class="small text-muted border-top pt-2 text-center">
+                {% if user_gamification.goals.is_completed %}
+                  All daily goals achieved! Next milestones unlock tomorrow.
+                {% elif user_gamification.goals.completed_steps > 0 %}
+                  Step {{ user_gamification.goals.completed_steps }} achieved! Keep going for Step {{ user_gamification.goals.step }}!
+                {% else %}
+                  Contribute posts and reactions to hit today's goal!
+                {% endif %}
+              </div>
+            </div>
+          </li>
+          {% endif %}
+
+          <!-- Design Claim 23 of Chapter 2: Points & Streak in Navbar -->
+          <li class="nav-item me-2">
+            <a href="{{ url_for('shop') }}" class="btn btn-sm" title="Your reward points - Click to open Shop">
+              {{ user_gamification.points if user_gamification else 0 }} pts
+              {% if user_gamification and user_gamification.streak > 0 %}
+                <span class="badge bg-danger ms-1">{{ user_gamification.streak }}d</span>
+              {% endif %}
+            </a>
+          </li>
+
           <!-- If logged in, show User Dropdown Menu -->
           <li class="nav-item dropdown">
             <a class="nav-link dropdown-toggle" href="#" id="navbarUserDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -58,6 +135,7 @@
             <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarUserDropdown">
               <!-- Link to user's profile page -->
               <li><a class="dropdown-item" href="{{ url_for('user_profile', username=session.get('username')) }}">My Profile</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('shop') }}">Rewards Shop</a></li>
               <li><hr class="dropdown-divider"></li>
               <li><a class="dropdown-item" href="/logout">Logout</a></li>
             </ul>
