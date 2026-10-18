@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, g, abort
 from werkzeug.security import generate_password_hash, check_password_hash
 from cryptography.fernet import Fernet
 import collections
@@ -6,7 +6,7 @@ import json
 import sqlite3
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.secret_key = '123456789' 
@@ -93,6 +93,234 @@ REACTION_EMOJIS = {
     'wow': '😮', 'sad': '😢', 'angry': '😠',
 }
 REACTION_TYPES = list(REACTION_EMOJIS.keys())
+
+# Gamification System (Design Claims 15 & 23 of Chapter 2)
+_db_initialized = False
+
+def init_gamification_db():
+    """
+    Initializes database tables and columns for gamification (points, skins, streaks)
+    dynamically so the platform operates on any standard database.sqlite file.
+    """
+    global _db_initialized
+    if _db_initialized:
+        return
+    db = get_db()
+
+    # 1. Add required gamification columns to 'users' if missing
+    cursor = db.execute("PRAGMA table_info(users)")
+    existing_cols = [row[1] for row in cursor.fetchall()]
+    if 'points' not in existing_cols:
+        db.execute("ALTER TABLE users ADD COLUMN points INTEGER DEFAULT 0")
+    if 'equipped_skin_id' not in existing_cols:
+        db.execute("ALTER TABLE users ADD COLUMN equipped_skin_id INTEGER DEFAULT 1")
+    if 'last_active_date' not in existing_cols:
+        db.execute("ALTER TABLE users ADD COLUMN last_active_date TEXT DEFAULT NULL")
+    if 'login_streak' not in existing_cols:
+        db.execute("ALTER TABLE users ADD COLUMN login_streak INTEGER DEFAULT 0")
+
+    # 2. Add the 'created_at' column to 'reactions' if missing
+    cursor = db.execute("PRAGMA table_info(reactions)")
+    existing_reaction_cols = [row[1] for row in cursor.fetchall()]
+    if 'created_at' not in existing_reaction_cols:
+        db.execute("ALTER TABLE reactions ADD COLUMN created_at TEXT DEFAULT NULL")
+
+    # 3. Create a skins table (Design Claim 23: Rewards / cosmetic skins)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS skins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL,
+            price INTEGER NOT NULL,
+            color TEXT NOT NULL,
+            badge_icon TEXT NOT NULL
+        )
+    """)
+
+    # 4. Create user_skins table to track ownership
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS user_skins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            skin_id INTEGER NOT NULL,
+            unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, skin_id)
+        )
+    """)
+
+    # 5. Populate predefined skins matching Indications.md
+    default_skins = [
+        (1, 'Classic', 'Standard platform appearance', 0, '#6c757d', ''),
+        (2, 'Bronze', 'A metallic bronze badge for your first contributions', 100, '#cd7f32', ''),
+        (3, 'Silver', 'A gleaming silver skin for active community members', 300, '#a0a0a0', ''),
+        (4, 'Gold', 'Radiant gold status for dedicated contributors', 500, '#d4af37', ''),
+        (5, 'Diamond', 'Prestigious diamond cyan glow for top-tier contributors', 1000, '#00bfff', ''),
+        (6, 'Emerald', 'Legendary vibrant emerald finish for elite contributors', 5000, '#2ecc71', '')
+    ]
+    for s_id, s_name, s_desc, s_price, s_color, s_badge in default_skins:
+        db.execute("""
+            INSERT OR IGNORE INTO skins (id, name, description, price, color, badge_icon)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (s_id, s_name, s_desc, s_price, s_color, s_badge))
+
+    # 6. Ensure existing users have the default Classic skin in user_skins
+    db.execute("INSERT OR IGNORE INTO user_skins (user_id, skin_id) SELECT id, 1 FROM users")
+    db.commit()
+    _db_initialized = True
+
+
+def award_user_points(user_id, points_to_add, reason=""):
+    """
+    Design Claim 23 of Chapter 2: Rewards motivate contributions.
+    Adds points to user balance.
+    """
+    if not user_id or points_to_add <= 0:
+        return
+    db = get_db()
+    db.execute('UPDATE users SET points = IFNULL(points, 0) + ? WHERE id = ?', (points_to_add, user_id))
+    db.commit()
+
+
+def check_daily_login_streak(user_id):
+    """
+    Design Claim 23 of Chapter 2: Dynamic login streak reward system.
+    Rules:
+    +10 points on day 1, adding 10 points per consecutive day up to 100 points/day max.
+    Returns (new_streak, streak_points_awarded).
+    """
+    db = get_db()
+    user = query_db('SELECT last_active_date, login_streak FROM users WHERE id = ?', (user_id,), one=True)
+    if not user:
+        return 0, 0
+
+    today = datetime.now().date()
+    today_str = today.isoformat()
+    last_active = user['last_active_date']
+    current_streak = user['login_streak'] or 0
+
+    if last_active == today_str:
+        return current_streak, 0
+
+    yesterday_str = (today - timedelta(days=1)).isoformat()
+    if last_active == yesterday_str:
+        new_streak = current_streak + 1
+    else:
+        new_streak = 1
+
+    streak_points = min(new_streak * 10, 100)
+    db.execute(
+        'UPDATE users SET last_active_date = ?, login_streak = ?, points = IFNULL(points, 0) + ? WHERE id = ?',
+        (today_str, new_streak, streak_points, user_id)
+    )
+    db.commit()
+    return new_streak, streak_points
+
+
+def get_user_daily_goals(user_id):
+    """
+    Design Claim 15 of Chapter 2: Goals have greater effects when people receive
+    frequent feedback about their performance with respect to the goals.
+    Daily goal milestone:
+    Step 1: 2 posts per day & 5 reactions per day.
+    Step 2: 4 posts per day & 10 reactions per day, then increasing.
+    """
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    posts_today = query_db(
+        "SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND date(created_at) = date(?)",
+        (user_id, today_str),
+        one=True
+    )['count']
+
+    reactions_today = query_db(
+        "SELECT COUNT(*) as count FROM reactions WHERE user_id = ? AND date(created_at) = date(?)",
+        (user_id, today_str),
+        one=True
+    )['count']
+
+    # Step calculation: starts at 1, escalates when milestones are reached
+    step = 1
+    target_posts = 2
+    target_reactions = 5
+    while posts_today >= target_posts and reactions_today >= target_reactions:
+        step += 1
+        target_posts = step * 2
+        target_reactions = step * 5
+
+    posts_pct = min(100, int((posts_today / target_posts) * 100)) if target_posts else 100
+    reactions_pct = min(100, int((reactions_today / target_reactions) * 100)) if target_reactions else 100
+    is_completed = (posts_today >= 2 and reactions_today >= 5)
+
+    return {
+        'step': step,
+        'posts_today': posts_today,
+        'target_posts': target_posts,
+        'posts_pct': posts_pct,
+        'reactions_today': reactions_today,
+        'target_reactions': target_reactions,
+        'reactions_pct': reactions_pct,
+        'is_completed': is_completed
+    }
+
+
+@app.before_request
+def gamification_before_request():
+    if request.path.startswith('/static'):
+        return
+    init_gamification_db()
+    user_id = session.get('user_id')
+    if user_id:
+        streak, streak_points = check_daily_login_streak(user_id)
+        if streak_points > 0:
+            flash(f"Daily login streak: {streak} day(s)! You earned +{streak_points} points today.", "success")
+
+
+@app.context_processor
+def inject_gamification():
+    user_id = session.get('user_id')
+    if not user_id:
+        return {'user_gamification': None}
+    user = query_db('SELECT points, login_streak, equipped_skin_id FROM users WHERE id = ?', (user_id,), one=True)
+    goals = get_user_daily_goals(user_id)
+    return {
+        'user_gamification': {
+            'points': user['points'] if user else 0,
+            'streak': user['login_streak'] if user else 0,
+            'equipped_skin_id': user['equipped_skin_id'] if user else 1,
+            'goals': goals
+        }
+    }
+
+
+@app.template_global()
+def get_user_skin(username_or_id):
+    """
+    Design Claim 23 of Chapter 2: Returns the equipped skin details for styling
+    the avatar circle and username across the platform.
+    """
+    if not username_or_id:
+        return None
+    if not hasattr(g, '_skin_cache'):
+        g._skin_cache = {}
+    key = str(username_or_id)
+    if key in g._skin_cache:
+        return g._skin_cache[key]
+
+    if key.isdigit():
+        user = query_db(
+            'SELECT s.id, s.name, s.color, s.badge_icon FROM users u JOIN skins s ON u.equipped_skin_id = s.id WHERE u.id = ?',
+            (int(key),),
+            one=True
+        )
+    else:
+        user = query_db(
+            'SELECT s.id, s.name, s.color, s.badge_icon FROM users u JOIN skins s ON u.equipped_skin_id = s.id WHERE u.username = ?',
+            (key,),
+            one=True
+        )
+
+    skin_info = dict(user) if (user and user['name']) else {'id': 1, 'name': 'Classic', 'color': '#6c757d', 'badge_icon': ''}
+    g._skin_cache[key] = skin_info
+    return skin_info
 
 
 @app.route('/')
@@ -235,11 +463,25 @@ def add_post():
 
     # Basic validation to ensure post is not empty
     if moderated_content and moderated_content.strip():
+        # Design Claim 23 of Chapter 2: Rewards motivate contributions (+50 1st post of the day, +10 after)
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        already_posted_today = query_db(
+            "SELECT 1 FROM posts WHERE user_id = ? AND date(created_at) = date(?) LIMIT 1",
+            (user_id, today_str),
+            one=True
+        )
+
         db = get_db()
         db.execute('INSERT INTO posts (user_id, content) VALUES (?, ?)',
                    (user_id, moderated_content))
         db.commit()
-        flash('Your post was successfully created!', 'success')
+
+        if not already_posted_today:
+            award_user_points(user_id, 50, "First post of the day")
+            flash('Your post was successfully created! (+50 pts for your 1st post of the day)', 'success')
+        else:
+            award_user_points(user_id, 10, "Post created")
+            flash('Your post was successfully created! (+10 pts)', 'success')
     else:
         # This will catch empty posts or posts that were fully censored
         flash('Post cannot be empty or was fully censored.', 'warning')
@@ -545,7 +787,9 @@ def add_comment(post_id):
         db.execute('INSERT INTO comments (post_id, user_id, content) VALUES (?, ?, ?)',
                    (post_id, user_id, content))
         db.commit()
-        flash('Your comment was added.', 'success')
+        # Design Claim 23 of Chapter 2: Rewards motivate contributions (+10 pts per comment)
+        award_user_points(user_id, 10, "Comment added")
+        flash('Your comment was added! (+10 pts)', 'success')
     else:
         flash('Comment cannot be empty.', 'warning')
 
@@ -617,8 +861,12 @@ def add_reaction():
                    (new_reaction_type, existing_reaction['id']))
     else:
         # Step 3: If it does not exist, INSERT a new reaction.
-        db.execute('INSERT INTO reactions (post_id, user_id, reaction_type) VALUES (?, ?, ?)',
-                   (post_id, user_id, new_reaction_type))
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        db.execute('INSERT INTO reactions (post_id, user_id, reaction_type, created_at) VALUES (?, ?, ?, ?)',
+                   (post_id, user_id, new_reaction_type, now_str))
+        # Design Claim 23 of Chapter 2: Rewards motivate contributions (+10 pts per reaction)
+        award_user_points(user_id, 10, "Reaction added")
+        flash("Reaction added! (+10 pts)", "success")
 
     db.commit()
 
@@ -902,6 +1150,100 @@ def admin_delete_comment(comment_id):
 @app.route('/rules')
 def rules():
     return render_template('rules.html.j2')
+
+
+# Design Claim 23 of Chapter 2: Rewards/shop routes
+@app.route('/shop')
+def shop():
+    """
+    Rewards Shop page where users spend earned points on exclusive status skins.
+    """
+    user_id = session.get('user_id')
+    user_points = 0
+    equipped_skin_id = 1
+    unlocked_skin_ids = [1]
+    streak = 0
+
+    if user_id:
+        user = query_db('SELECT points, equipped_skin_id, login_streak FROM users WHERE id = ?', (user_id,), one=True)
+        if user:
+            user_points = user['points'] or 0
+            equipped_skin_id = user['equipped_skin_id'] or 1
+            streak = user['login_streak'] or 0
+        unlocked = query_db('SELECT skin_id FROM user_skins WHERE user_id = ?', (user_id,))
+        unlocked_skin_ids = [row['skin_id'] for row in unlocked] if unlocked else []
+        if 1 not in unlocked_skin_ids:
+            unlocked_skin_ids.append(1)
+
+    skins = query_db('SELECT * FROM skins ORDER BY price ASC')
+    return render_template('shop.html.j2',
+                           skins=skins,
+                           user_points=user_points,
+                           equipped_skin_id=equipped_skin_id,
+                           unlocked_skin_ids=unlocked_skin_ids,
+                           streak=streak)
+
+
+@app.route('/shop/buy/<int:skin_id>', methods=['POST'])
+def unlock_skin(skin_id):
+    """Unlocks a skin using points and automatically equips it."""
+    user_id = session.get('user_id')
+    if not user_id:
+        flash("You must be logged in to unlock skins.", "danger")
+        return redirect(url_for('login'))
+
+    skin = query_db('SELECT * FROM skins WHERE id = ?', (skin_id,), one=True)
+    if not skin:
+        flash("Skin not found.", "danger")
+        return redirect(url_for('shop'))
+
+    user = query_db('SELECT points FROM users WHERE id = ?', (user_id,), one=True)
+    user_points = user['points'] if user else 0
+
+    already_owned = query_db('SELECT 1 FROM user_skins WHERE user_id = ? AND skin_id = ?', (user_id, skin_id), one=True)
+    if already_owned:
+        flash(f"You already own the {skin['name']} skin!", "info")
+        return redirect(url_for('shop'))
+
+    if user_points < skin['price']:
+        flash(f"Not enough points! You need {skin['price']} pts, but only have {user_points} pts.", "warning")
+        return redirect(url_for('shop'))
+
+    db = get_db()
+    # Deduct points and equip skin
+    db.execute('UPDATE users SET points = points - ?, equipped_skin_id = ? WHERE id = ?', (skin['price'], skin_id, user_id))
+    # Record ownership
+    db.execute('INSERT OR IGNORE INTO user_skins (user_id, skin_id) VALUES (?, ?)', (user_id, skin_id))
+    db.commit()
+
+    flash(f"Successfully unlocked the {skin['name']} skin! It is now equipped.", "success")
+    return redirect(url_for('shop'))
+
+
+@app.route('/shop/equip/<int:skin_id>', methods=['POST'])
+def equip_skin(skin_id):
+    """Equips an already unlocked skin."""
+    user_id = session.get('user_id')
+    if not user_id:
+        flash("You must be logged in to equip skins.", "danger")
+        return redirect(url_for('login'))
+
+    skin = query_db('SELECT * FROM skins WHERE id = ?', (skin_id,), one=True)
+    if not skin:
+        flash("Skin not found.", "danger")
+        return redirect(url_for('shop'))
+
+    is_owned = (skin_id == 1) or query_db('SELECT 1 FROM user_skins WHERE user_id = ? AND skin_id = ?', (user_id, skin_id), one=True)
+    if not is_owned:
+        flash(f"You haven't unlocked the {skin['name']} skin yet.", "warning")
+        return redirect(url_for('shop'))
+
+    db = get_db()
+    db.execute('UPDATE users SET equipped_skin_id = ? WHERE id = ?', (skin_id, user_id))
+    db.commit()
+
+    flash(f"Equipped {skin['name']} skin!", "success")
+    return redirect(url_for('shop'))
 
 @app.template_global()
 def loop_color(user_id):
