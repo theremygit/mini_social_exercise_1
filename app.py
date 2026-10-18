@@ -237,28 +237,31 @@ def get_user_daily_goals(user_id):
         one=True
     )['count']
 
-    # Step calculation: starts at 1, escalates when milestones are reached
+    # Step calculation: starts at 1, escalates when milestones are reached (up to 3 daily tiers)
+    MAX_STEP = 3
     step = 1
     target_posts = 2
     target_reactions = 5
-    while posts_today >= target_posts and reactions_today >= target_reactions:
+    while step < MAX_STEP and posts_today >= target_posts and reactions_today >= target_reactions:
         step += 1
         target_posts = step * 2
         target_reactions = step * 5
 
     posts_pct = min(100, int((posts_today / target_posts) * 100)) if target_posts else 100
     reactions_pct = min(100, int((reactions_today / target_reactions) * 100)) if target_reactions else 100
-    is_completed = (posts_today >= 2 and reactions_today >= 5)
+    is_max_completed = (posts_today >= target_posts and reactions_today >= target_reactions)
 
     return {
         'step': step,
+        'max_step': MAX_STEP,
         'posts_today': posts_today,
         'target_posts': target_posts,
         'posts_pct': posts_pct,
         'reactions_today': reactions_today,
         'target_reactions': target_reactions,
         'reactions_pct': reactions_pct,
-        'is_completed': is_completed
+        'is_completed': is_max_completed,
+        'completed_steps': (step if is_max_completed else step - 1)
     }
 
 
