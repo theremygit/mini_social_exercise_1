@@ -22,6 +22,32 @@
 </div>
 {% endif %}
 
+<!-- Design Claim 1 of Chapter 2: Making the list of needed contributions easily visible increases the likelihood that the community will provide them -->
+<div class="col-md-8 mx-auto mb-4">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex flex-column flex-md-row justify-content-between align-items-center gap-3">
+        <div>
+          <h5 class="card-title text-primary mb-1">
+            Community Needs Your Contribution!
+          </h5>
+          <p class="card-text text-muted mb-0">
+            There are currently <strong>{{ contribution_stats.no_contributions }}</strong> posts with no interactions and <strong>{{ contribution_stats.no_reactions }}</strong> posts waiting for reactions. Your voice can make a difference!
+          </p>
+        </div>
+        <div class="d-flex gap-2 flex-shrink-0">
+          <a href="{{ url_for('random_unanswered_post') }}" class="btn btn-primary float-end text-nowrap shadow-sm">
+            Help a Random Post
+          </a>
+          <a href="{{ url_for('feed', sort='needing_contribution', show=current_show) }}" class="btn {% if current_sort == 'needing_contribution' %}btn-secondary{% else %}btn-primary{% endif %} text-nowrap">
+            View List
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <h2 class="text-center border-bottom pb-2 mb-4"><span>Posts</span></h2>
 
 <div class="mb-4 text-center">
