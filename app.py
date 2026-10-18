@@ -138,6 +138,8 @@ def feed():
         posts = query_db(query, final_params)
     elif sort == 'recommended':
         posts = recommend(current_user_id, show == 'following' and current_user_id)
+    elif sort == 'needing_contribution':
+        posts = needing_contribution(current_user_id, pagination_params)
     else:  # Default sort is 'new'
         query = f"""
             SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
@@ -937,6 +939,40 @@ def recommend(user_id, filter_following):
     recommended_posts = {} 
 
     return recommended_posts;
+
+
+def needing_contribution(current_user_id, pagination_params):
+    """
+    Returns:
+        A list of recommended posts, in reverse-chronological order.
+    """
+    needing_contribution_posts = {}
+    # Rule: Cannot be a post from the same user
+    if current_user_id:
+        query = f"""
+                            SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
+                            FROM posts p
+                            JOIN users u ON p.user_id = u.id
+                            WHERE p.user_id != {current_user_id}
+                            AND NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)
+                            AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
+                            ORDER BY p.created_at DESC
+                            LIMIT ? OFFSET ?
+                        """
+    else:
+        query = f"""
+                            SELECT p.id, p.content, p.created_at, u.username, u.id as user_id
+                            FROM posts p
+                            JOIN users u ON p.user_id = u.id
+                            WHERE NOT EXISTS (SELECT 1 FROM reactions r WHERE r.post_id = p.id)
+                            AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id)
+                            ORDER BY p.created_at DESC
+                            LIMIT ? OFFSET ?
+                        """
+    final_params = list(pagination_params)
+    needing_contribution_posts = query_db(query, final_params)
+
+    return needing_contribution_posts
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)

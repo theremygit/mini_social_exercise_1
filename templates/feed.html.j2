@@ -26,12 +26,13 @@
 
 <div class="mb-4 text-center">
 
-<!-- This is the 'sort' filter for New / Popular / Recommended -->
+<!-- This is the 'sort' filter for New / Popular / Recommended / Needing Contribution -->
   <div class="btn-group me-5" role="group" aria-label="Sort posts">
     <!-- The link preserves the current_show state -->
     <a href="{{ url_for('feed', sort='new', show=current_show) }}" class="btn {% if current_sort == 'new' %}btn-primary{% else %}btn-light{% endif %}">New</a>
     <a href="{{ url_for('feed', sort='popular', show=current_show) }}" class="btn {% if current_sort == 'popular' %}btn-primary{% else %}btn-light{% endif %}">Popular</a>
     <a href="{{ url_for('feed', sort='recommended', show=current_show) }}" class="btn {% if current_sort == 'recommended' %}btn-primary{% else %}btn-light{% endif %}">Recommended</a>
+    <a href="{{ url_for('feed', sort='needing_contribution', show=current_show) }}" class="btn {% if current_sort == 'needing_contribution' %}btn-primary{% else %}btn-light{% endif %}">Needing Contribution</a>
   </div>
 
   <!-- This is the 'show' filter for All / Following -->
