@@ -118,6 +118,9 @@ def init_gamification_db():
         db.execute("ALTER TABLE users ADD COLUMN last_active_date TEXT DEFAULT NULL")
     if 'login_streak' not in existing_cols:
         db.execute("ALTER TABLE users ADD COLUMN login_streak INTEGER DEFAULT 0")
+    # 'last_first_post_date' column to persist the date when the daily 50pt first-post bonus was claimed
+    if 'last_first_post_date' not in existing_cols:
+        db.execute("ALTER TABLE users ADD COLUMN last_first_post_date TEXT DEFAULT NULL")
 
     # 2. Add the 'created_at' column to 'reactions' if missing
     cursor = db.execute("PRAGMA table_info(reactions)")
@@ -180,6 +183,16 @@ def award_user_points(user_id, points_to_add, reason=""):
     db.execute('UPDATE users SET points = IFNULL(points, 0) + ? WHERE id = ?', (points_to_add, user_id))
     db.commit()
 
+def deduct_user_points(user_id, points_to_deduct):
+    """
+    Design Claim 23 of Chapter 2: Rewards motivate contributions.
+    Deducts points from user balance when a contribution is removed (clamped to 0).
+    """
+    if not user_id or points_to_deduct <= 0:
+        return
+    db = get_db()
+    db.execute('UPDATE users SET points = MAX(0, IFNULL(points, 0) - ?) WHERE id = ?', (points_to_deduct, user_id))
+    db.commit()
 
 def check_daily_login_streak(user_id):
     """
@@ -468,21 +481,20 @@ def add_post():
     if moderated_content and moderated_content.strip():
         # Design Claim 23 of Chapter 2: Rewards motivate contributions (+50 1st post of the day, +10 after)
         today_str = datetime.now().strftime('%Y-%m-%d')
-        already_posted_today = query_db(
-            "SELECT 1 FROM posts WHERE user_id = ? AND date(created_at) = date(?) LIMIT 1",
-            (user_id, today_str),
-            one=True
-        )
+        user = query_db('SELECT last_first_post_date FROM users WHERE id = ?', (user_id,), one=True)
+        already_received_first_post_bonus = (user and user['last_first_post_date'] == today_str)
 
         db = get_db()
         db.execute('INSERT INTO posts (user_id, content) VALUES (?, ?)',
                    (user_id, moderated_content))
-        db.commit()
 
-        if not already_posted_today:
+        if not already_received_first_post_bonus:
+            db.execute('UPDATE users SET last_first_post_date = ? WHERE id = ?', (today_str, user_id))
+            db.commit()
             award_user_points(user_id, 50, "First post of the day")
             flash('Your post was successfully created! (+50 pts for your 1st post of the day)', 'success')
         else:
+            db.commit()
             award_user_points(user_id, 10, "Post created")
             flash('Your post was successfully created! (+10 pts)', 'success')
     else:
@@ -902,6 +914,8 @@ def unreact():
     if existing_reaction:
         db.execute('DELETE FROM reactions WHERE id = ?', (existing_reaction['id'],))
         db.commit()
+        # Deduct the 10 points awarded when reacting to prevent repeat point farming
+        deduct_user_points(user_id, 10)
         flash("Reaction removed.", "success")
     else:
         flash("No reaction to remove.", "info")
