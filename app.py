@@ -168,6 +168,19 @@ def init_gamification_db():
 
     # 6. Ensure existing users have the default Classic skin in user_skins
     db.execute("INSERT OR IGNORE INTO user_skins (user_id, skin_id) SELECT id, 1 FROM users")
+
+    # 7. Track claimed reaction rewards per (user_id, post_id) so removing and
+    #    re-adding a reaction on the same post can never grant points more than once
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS reaction_rewards (
+            user_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL,
+            rewarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, post_id)
+        )
+    """)
+    db.execute("INSERT OR IGNORE INTO reaction_rewards (user_id, post_id) SELECT user_id, post_id FROM reactions")
+
     db.commit()
     _db_initialized = True
 
@@ -879,9 +892,20 @@ def add_reaction():
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         db.execute('INSERT INTO reactions (post_id, user_id, reaction_type, created_at) VALUES (?, ?, ?, ?)',
                    (post_id, user_id, new_reaction_type, now_str))
-        # Design Claim 23 of Chapter 2: Rewards motivate contributions (+10 pts per reaction)
-        award_user_points(user_id, 10, "Reaction added")
-        flash("Reaction added! (+10 pts)", "success")
+        # Design Claim 23 of Chapter 2: Rewards motivate contributions (+10 pts per post reacted to, once per post)
+        already_rewarded = query_db(
+            'SELECT 1 FROM reaction_rewards WHERE user_id = ? AND post_id = ?',
+            (user_id, post_id),
+            one=True
+        )
+        if not already_rewarded:
+            db.execute('INSERT INTO reaction_rewards (user_id, post_id) VALUES (?, ?)', (user_id, post_id))
+            db.commit()
+            award_user_points(user_id, 10, "Reaction added")
+            flash("Reaction added! (+10 pts)", "success")
+        else:
+            db.commit()
+            flash("Reaction added!", "success")
 
     db.commit()
 
